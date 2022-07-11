@@ -1,0 +1,4 @@
+DEPS_SOLVE_TMP += spi_slave
+RTL_SRCS_SOLVE_TMP += /home/anne/mch2022-badge/mch2022-firmware-ice40/cores/spi_slave//rtl/spi_dev_arb.v /home/anne/mch2022-badge/mch2022-firmware-ice40/cores/spi_slave//rtl/spi_dev_core.v /home/anne/mch2022-badge/mch2022-firmware-ice40/cores/spi_slave//rtl/spi_dev_ezwb.v /home/anne/mch2022-badge/mch2022-firmware-ice40/cores/spi_slave//rtl/spi_dev_fread.v /home/anne/mch2022-badge/mch2022-firmware-ice40/cores/spi_slave//rtl/spi_dev_proto.v /home/anne/mch2022-badge/mch2022-firmware-ice40/cores/spi_slave//rtl/spi_dev_scmd.v /home/anne/mch2022-badge/mch2022-firmware-ice40/cores/spi_slave//rtl/spi_dev_to_wb.v
+SIM_SRCS_SOLVE_TMP += 
+PREREQ_SOLVE_TMP +=  
