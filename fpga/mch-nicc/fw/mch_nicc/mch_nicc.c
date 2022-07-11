@@ -184,7 +184,8 @@ char getc() {
 }
 
 uint16_t get16() {
-	return (getc()<<8) | getc();
+	uint8_t msb = getc();
+	return (msb<<8) | getc();
 }
 
 
@@ -195,6 +196,7 @@ uint16_t get16() {
 
 volatile uint8_t   *bitmap  = (volatile uint8_t *)  0x10000000;
 volatile uint16_t  *palette = (volatile uint16_t *) 0x20000000;
+#define FB_SWITCH  *(volatile uint32_t  *) 0x4020000C
 
 /* draw_poly return codes */
 enum {POLY_MORE, POLY_FRAME, POLY_FRAME64, POLY_STREAM};
@@ -318,7 +320,7 @@ int draw_frame() {
 		    b=(pal   )&0x7;
 
 			/* reverse order (bit 15 -> palette 0) */
-			palette[15-i] = (r<<12|g<<8|b<<2);
+			palette[15-i] = (r<<13)|(g<<8)|(b<<2);
 		}
 	}
 
@@ -366,23 +368,18 @@ int main(int argc, char* argv[])
 	file_offset = 0;
 	FILE_ID = 0xBEEFD00D;
 	int done = 0;
-	int i=0;
 
-	puts("MCH_NICC");
-    LED_RED   = ( 0x1f) << 11;
-	palette[0] = 0;
-	palette[1] = 0xFFFF;
-	for(int x=0; x<256; x++) for(int y=0; y<200; y++) {
-		bitmap[y*256+x] = (x==y) ? 1 : 0;
-	}
-    LED_RED   = 0;
-    while (!done) {
-    	if(LED_BLUE) LED_BLUE = 0;
-		else LED_BLUE = ( 0x1) << 11;
-		done = draw_frame();
-		printf("%d\n",i++);
+    while (1) {
+		while(!done) {
+			done = draw_frame();
+			FB_SWITCH = 1;
+		}
+
+		/* Push A to restart */
+		while(BUTTONS & (1<<9) == 0);
+
+		file_offset = 0;
+		FILE_ID = 0xBEEFD00D;
+		done = 0;
     }
-    LED_BLUE  = 0;
-    LED_RED   = ( 0x1f) << 11;
-	while(1);
 }

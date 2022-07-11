@@ -408,26 +408,56 @@ module riscv_playground(
    /***************************************************************************/
    wire mem_address_is_lcd;
    wire mem_address_is_pal;
-   wire [31:0] lcd_rdata;
+   wire [15:0] lcd_rdata0;
+   wire [15:0] lcd_rdata1;
+   wire [15:0] lcd_rdata = lcdsel ? lcd_rdata0 : lcd_rdata1;
    wire [3:0] lcd_read;
-   wire lcd_rbusy = updating;
+   wire lcd_rbusy = 0;
 
    always @(pixelpos, lcd_rdata) begin
       case(pixelpos[1:0])
 	     2'b00: lcd_read <= lcd_rdata[ 3: 0];
-	     2'b01: lcd_read <= lcd_rdata[11: 8];
-	     2'b10: lcd_read <= lcd_rdata[19:16];
-	     2'b11: lcd_read <= lcd_rdata[27:24];
+	     2'b01: lcd_read <= lcd_rdata[ 7: 4];
+	     2'b10: lcd_read <= lcd_rdata[11: 8];
+	     2'b11: lcd_read <= lcd_rdata[15:12];
 		 default: lcd_read <= 0;
 	  endcase
    end
 
-   ice40up5k_spram lcdram(
-      .clk(clk),
-      .wen({4{~lcd_rbusy}} & mem_wmask & {4{mem_address_is_lcd}}),
-      .addr(lcd_rbusy ? pixelpos[15:2] : mem_address[15:2]),
-      .wdata(mem_wdata),
-      .rdata(lcd_rdata)
+   reg lcdsel = 0;
+
+   /*
+   always @(posedge clk) begin
+      if(ypos == 1 & xpos == 0) lcdsel <= ~lcdsel;
+   end
+   */
+
+   wire [15:0] mem_nibdata = {mem_wdata[27:24],mem_wdata[19:16],mem_wdata[11:8],mem_wdata[3:0]};
+
+   SB_SPRAM256KA lcdram0 (
+      .ADDRESS(lcdsel ? pixelpos[15:2] : mem_address[15:2]),
+      .DATAIN(mem_nibdata),
+      .MASKWREN({4{~lcdsel}} & mem_wmask & {4{mem_address_is_lcd}}),
+      .WREN(~lcdsel & |mem_wmask & mem_address_is_lcd),
+      .CHIPSELECT(1'b1),
+      .CLOCK(clk),
+      .STANDBY(1'b0),
+      .SLEEP(1'b0),
+      .POWEROFF(1'b1),
+      .DATAOUT(lcd_rdata0)
+   );
+
+   SB_SPRAM256KA lcdram1 (
+      .ADDRESS(~lcdsel ? pixelpos[15:2] : mem_address[15:2]),
+      .DATAIN(mem_nibdata),
+      .MASKWREN({4{lcdsel}} & mem_wmask & {4{mem_address_is_lcd}}),
+      .WREN(lcdsel & |mem_wmask & mem_address_is_lcd),
+      .CHIPSELECT(1'b1),
+      .CLOCK(clk),
+      .STANDBY(1'b0),
+      .SLEEP(1'b0),
+      .POWEROFF(1'b1),
+      .DATAOUT(lcd_rdata1)
    );
 
    reg [15:0] palette [15:0];
@@ -455,10 +485,10 @@ module riscv_playground(
    reg [8:0] data0, data1;
 
    always @(posedge clk) begin
-      if(~toggle & mem_wmask[0] & mem_address_is_pal) palette[mem_address[3:1]][ 7:0] <= mem_wdata[ 7:0 ];
-      if(~toggle & mem_wmask[1] & mem_address_is_pal) palette[mem_address[3:1]][15:8] <= mem_wdata[15:8 ];
-      if(~toggle & mem_wmask[2] & mem_address_is_pal) palette[mem_address[3:1]][ 7:0] <= mem_wdata[23:16];
-      if(~toggle & mem_wmask[3] & mem_address_is_pal) palette[mem_address[3:1]][15:8] <= mem_wdata[31:24];
+      if(mem_wmask[0] & mem_address_is_pal) palette[mem_address[3:1]][ 7:0] <= mem_wdata[ 7:0 ];
+      if(mem_wmask[1] & mem_address_is_pal) palette[mem_address[3:1]][15:8] <= mem_wdata[15:8 ];
+      if(mem_wmask[2] & mem_address_is_pal) palette[mem_address[3:1]][ 7:0] <= mem_wdata[23:16];
+      if(mem_wmask[3] & mem_address_is_pal) palette[mem_address[3:1]][15:8] <= mem_wdata[31:24];
    end
 
    always @(posedge clk) begin
@@ -557,9 +587,10 @@ module riscv_playground(
        mem_address[17] ? {random, serial_busy, serial_valid, serial_data}  : 32'd0) |  // RO: Status. [10]: Random [9]: Busy sending [8]: Valid read data [7]: Read data without dropping from receive FIFO
       (mem_address[18] ?  ticks                                            : 32'd0) |  // RW: Timer count register
       (mem_address[19] ?  reload                                           : 32'd0) |  // RW: Timer reload value
-      (mem_address[20] ?  file_id                                          : 32'd0) ;  // RW: File identifier
+      (mem_address[20] ?  file_id                                          : 32'd0) |  // RW: File identifier
+      (mem_address[21] ?  lcdsel                                           : 32'd0) ;  // RW: Framebuffer switch
 
-      //        27-21     Unused
+      //        27-22     Unused
 
 
    // This is for preparing the value to allow atomic clear, set, toggle capabilities on writes to IO registers!
@@ -580,6 +611,7 @@ module riscv_playground(
 
      if (io_wstrb & mem_address[12]) lcd_ctrl <= io_modifier;
      if (io_wstrb & mem_address[20]) file_id  <= io_modifier;
+     if (io_wstrb & mem_address[21]) lcdsel  <= io_modifier;
      //                         13   lcd_data write-only, side-effects in LCD code
 
      //                         16   uart_data, side-effects in UART code
