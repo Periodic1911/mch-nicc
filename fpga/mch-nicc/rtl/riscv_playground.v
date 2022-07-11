@@ -404,8 +404,33 @@ module riscv_playground(
      */
 
    /***************************************************************************/
-   // LCD, with text mode logic.
+   // LCD
    /***************************************************************************/
+   wire mem_address_is_lcd;
+   wire mem_address_is_pal;
+   wire [31:0] lcd_rdata;
+   wire [3:0] lcd_read;
+   wire lcd_rbusy = updating;
+
+   always @(pixelpos, lcd_rdata) begin
+      case(pixelpos[1:0])
+	     2'b00: lcd_read <= lcd_rdata[ 3: 0];
+	     2'b01: lcd_read <= lcd_rdata[11: 8];
+	     2'b10: lcd_read <= lcd_rdata[19:16];
+	     2'b11: lcd_read <= lcd_rdata[27:24];
+		 default: lcd_read <= 0;
+	  endcase
+   end
+
+   ice40up5k_spram lcdram(
+      .clk(clk),
+      .wen({4{~lcd_rbusy}} & mem_wmask & {4{mem_address_is_lcd}}),
+      .addr(lcd_rbusy ? pixelpos[15:2] : mem_address[15:2]),
+      .wdata(mem_wdata),
+      .rdata(lcd_rdata)
+   );
+
+   reg [15:0] palette [15:0];
 
    // Software control of special wires
 
@@ -416,63 +441,38 @@ module riscv_playground(
 
    SB_IO #(.PIN_TYPE(6'b0100_01)) lcdwrn (.OUTPUT_CLK(clk), .PACKAGE_PIN(lcd_wr_n), .D_OUT_0(1'b0), .D_OUT_1(lcd_write), .OUTPUT_ENABLE(1'b1));
    reg lcd_write = 0;
-
-   // Framebuffer & font data
-
-   reg [7:0] characters [1535:0]; // [1199:0] is sufficient, but RAM blocks come in 512 bytes...
-   reg [7:0]       font [1023:0]; initial $readmemh("font-c64-ascii.hex", font);
-
-   reg [7:0] read_char;
-   reg [7:0] read_font;
-
-   // Color registers for a beautiful output
-
-   reg [15:0] color_fg0 = 16'hFD20; // Orange
-   reg [15:0] color_bg0 = 16'h000F; // Navy
-   reg [15:0] color_fg1 = 16'h07FF; // Cyan
-   reg [15:0] color_bg1 = 16'h000F; // Navy
-
    // Internal signals for textmode generation
 
-  reg toggle = 0;
   reg fmark_sync1 = 0;
   reg fmark_sync2 = 0;
   reg updating = 0;
+  reg toggle = 0;
+  wire [15:0] pixelpos = (ypos*256)|xpos[7:0];
 
    reg [8:0] xpos; // 0 to 320-1
    reg [7:0] ypos; // 0 to 240-1
 
-   reg [7:0] char;
-   reg [7:0] bitmap;
    reg [8:0] data0, data1;
 
-   reg [2:0] fontrow;
-   reg colorswitch;
-   reg [10:0] characterindex;
+   always @(posedge clk) begin
+      if(~toggle & mem_wmask[0] & mem_address_is_pal) palette[mem_address[3:1]][ 7:0] <= mem_wdata[ 7:0 ];
+      if(~toggle & mem_wmask[1] & mem_address_is_pal) palette[mem_address[3:1]][15:8] <= mem_wdata[15:8 ];
+      if(~toggle & mem_wmask[2] & mem_address_is_pal) palette[mem_address[3:1]][ 7:0] <= mem_wdata[23:16];
+      if(~toggle & mem_wmask[3] & mem_address_is_pal) palette[mem_address[3:1]][15:8] <= mem_wdata[31:24];
+   end
 
    always @(posedge clk) begin
 
      // Reads from font data set & character buffer
 
-     char   <= characters[toggle ? characterindex   : mem_address[10:0]    ]; // 7-Bit ASCII. Using char[7] for alternate colors.
-     bitmap <=       font[toggle ? mem_address[9:0] : {char[6:0], fontrow}]; // 8x8 pixel font bitmap data.
-
-     case (toggle)
-       0: read_font <= bitmap; // Software can read these values three clock cycles after setting the address.
-       1: read_char <= char;
-     endcase
-
      toggle <= ~toggle; // Toggle between high and low part of data to LCD and between logic and software read access.
-
-    characterindex <= 0;
-    fontrow <= 0;
 
      // Synchronise incoming asynchronous VSYNC signal to clk
 
      fmark_sync1 <= lcd_fmark;
      fmark_sync2 <= fmark_sync1;
 
-     // Logik to push data to LCD
+     // Logic to push data to LCD
 
      if (fmark_sync2 & ~updating) // VSYNC active and not yet updating?
      begin
@@ -494,20 +494,14 @@ module riscv_playground(
          case (toggle)
            0: begin
                 {lcd_rs, lcd_d} <= data0;
-                colorswitch <= char[7]; // Using MSB of character to switch to a different set of colors
-                characterindex <= xpos[8:3] + 40 * ypos[7:3];
               end
 
            1: begin
                 {lcd_rs, lcd_d} <= data1;
 
-                {data1, data0} <= bitmap[~xpos[2:0]] ?
-                              colorswitch ? {1'b1, color_fg1[7:0], 1'b1, color_fg1[15:8]} :
-                                            {1'b1, color_fg0[7:0], 1'b1, color_fg0[15:8]} :
-                              colorswitch ? {1'b1, color_bg1[7:0], 1'b1, color_bg1[15:8]} :
-                                            {1'b1, color_bg0[7:0], 1'b1, color_bg0[15:8]} ;
+				if(xpos > 256 | ypos > 200) {data1, data0} <= {1'b1, 8'h00, 1'b1, 8'h00};
+				else {data1, data0} <= {1'b1, palette[lcd_read][7:0], 1'b1, palette[lcd_read][15:8]};
 
-                fontrow <= ypos[2:0];
 
                 if (ypos == 239) begin xpos <= xpos + 1; ypos <= 0; end else ypos <= ypos + 1;
                updating <= ~((xpos == 320) & (ypos == 1));
@@ -530,34 +524,8 @@ module riscv_playground(
 
    // This is a little trick to coax a word-addressed CPU into byte aligned reads and writes!
 
-   wire [31:0] font_rdata = {read_font, read_font, read_font, read_font};
-   wire [31:0] char_rdata = {read_char, read_char, read_char, read_char};
-
-   always @(posedge clk) begin
-
-      if(mem_wmask[0] & mem_address_is_char) characters[mem_address[10:0]] <= mem_wdata[ 7:0 ];
-      if(mem_wmask[1] & mem_address_is_char) characters[mem_address[10:0]] <= mem_wdata[15:8 ];
-      if(mem_wmask[2] & mem_address_is_char) characters[mem_address[10:0]] <= mem_wdata[23:16];
-      if(mem_wmask[3] & mem_address_is_char) characters[mem_address[10:0]] <= mem_wdata[31:24];
-
-      if(mem_wmask[0] & mem_address_is_font)       font[mem_address[ 9:0]] <= mem_wdata[ 7:0 ];
-      if(mem_wmask[1] & mem_address_is_font)       font[mem_address[ 9:0]] <= mem_wdata[15:8 ];
-      if(mem_wmask[2] & mem_address_is_font)       font[mem_address[ 9:0]] <= mem_wdata[23:16];
-      if(mem_wmask[3] & mem_address_is_font)       font[mem_address[ 9:0]] <= mem_wdata[31:24];
-
-   end
-
    // Reading char&font data is possible three cycles after the address is set.
    // Generate a busy signal accordingly.
-
-   reg [1:0] textmode_busy_counter;
-   wire textmode_rbusy = |textmode_busy_counter;
-
-   always @(posedge clk)
-   begin
-      if ((mem_address_is_font | mem_address_is_char) & mem_rstrb) textmode_busy_counter <= 2'b10;
-      else textmode_busy_counter <= textmode_busy_counter - textmode_rbusy;
-   end
 
    /***************************************************************************/
    // IO Ports.
@@ -585,9 +553,6 @@ module riscv_playground(
 
       (mem_address[12] ?  {updating,fmark_sync2,lcd_mode,lcd_ctrl}         : 32'd0) |
       //           13      lcd_data write-only                                         // WO: Handled in LCD code
-      (mem_address[14] ?  {color_bg0, color_fg0}                           : 32'd0) |
-      (mem_address[15] ?  {color_bg1, color_fg1}                           : 32'd0) |
-
       (mem_address[16] |                                                               // RW: Write: Data to send (8 bits) Read: Received data (8 bits) and flags
        mem_address[17] ? {random, serial_busy, serial_valid, serial_data}  : 32'd0) |  // RO: Status. [10]: Random [9]: Busy sending [8]: Valid read data [7]: Read data without dropping from receive FIFO
       (mem_address[18] ?  ticks                                            : 32'd0) |  // RW: Timer count register
@@ -630,16 +595,6 @@ module riscv_playground(
      if (mem_address_is_io & mem_address[ 5] & mem_wmask[1]) example[15:8 ]  <= io_modifier[15:8 ];
      if (mem_address_is_io & mem_address[ 5] & mem_wmask[2]) example[23:16]  <= io_modifier[23:16];
      if (mem_address_is_io & mem_address[ 5] & mem_wmask[3]) example[31:24]  <= io_modifier[31:24];
-
-     if (mem_address_is_io & mem_address[14] & mem_wmask[0]) color_fg0[ 7:0] <= io_modifier[ 7:0 ];
-     if (mem_address_is_io & mem_address[14] & mem_wmask[1]) color_fg0[15:8] <= io_modifier[15:8 ];
-     if (mem_address_is_io & mem_address[14] & mem_wmask[2]) color_bg0[ 7:0] <= io_modifier[23:16];
-     if (mem_address_is_io & mem_address[14] & mem_wmask[3]) color_bg0[15:8] <= io_modifier[31:24];
-
-     if (mem_address_is_io & mem_address[15] & mem_wmask[0]) color_fg1[ 7:0] <= io_modifier[ 7:0 ];
-     if (mem_address_is_io & mem_address[15] & mem_wmask[1]) color_fg1[15:8] <= io_modifier[15:8 ];
-     if (mem_address_is_io & mem_address[15] & mem_wmask[2]) color_bg1[ 7:0] <= io_modifier[23:16];
-     if (mem_address_is_io & mem_address[15] & mem_wmask[3]) color_bg1[15:8] <= io_modifier[31:24];
 
    end
 
@@ -691,8 +646,8 @@ module riscv_playground(
    // Memory map:
 
    wire mem_address_is_ram  = (mem_address[31:28] == 4'h0); // 0x00000000
-   wire mem_address_is_char = (mem_address[31:28] == 4'h1); // 0x10000000
-   wire mem_address_is_font = (mem_address[31:28] == 4'h2); // 0x20000000
+   wire mem_address_is_lcd  = (mem_address[31:28] == 4'h1); // 0x10000000
+   wire mem_address_is_pal  = (mem_address[31:28] == 4'h2); // 0x20000000
    wire mem_address_is_io   = (mem_address[31:28] == 4'h4); // 0x40000000
    wire mem_address_is_boot = (mem_address[31:28] == 4'h8); // 0x80000000
    wire mem_address_is_file = (mem_address[31:28] == 4'h9); // 0x90000000
@@ -702,8 +657,6 @@ module riscv_playground(
    assign mem_rdata =
 
       (mem_address_is_ram  ? ram_rdata              : 32'd0) |
-      (mem_address_is_char ? char_rdata             : 32'd0) |
-      (mem_address_is_font ? font_rdata             : 32'd0) |
       (mem_address_is_io   ? io_rdata_buffered      : 32'd0) |
       (mem_address_is_boot ? boot_rdata             : 32'd0) |
       (mem_address_is_file ? file_rdata             : 32'd0) ;
@@ -717,11 +670,11 @@ module riscv_playground(
 
    // If you have peripherals or memories that might be busy, wire them here.
 
-   wire mem_rbusy = textmode_rbusy | file_rbusy;
+   wire mem_rbusy = lcd_rbusy | file_rbusy;
    wire mem_wbusy = 1'b0;
 
    /***************************************************************************/
-   // Uninitialised RAM. 128 kb
+   // Uninitialised RAM. 64 kb
    /***************************************************************************/
 
    wire [31:0] ram_rdata;
@@ -729,7 +682,7 @@ module riscv_playground(
    ice40up5k_spram ram(
       .clk(clk),
       .wen(mem_wmask & {4{mem_address_is_ram}}),
-      .addr(mem_address[16:2]),
+      .addr(mem_address[15:2]),
       .wdata(mem_wdata),
       .rdata(ram_rdata)
    );

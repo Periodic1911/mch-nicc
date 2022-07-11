@@ -193,8 +193,8 @@ uint16_t get16() {
 //   Drawing
 // -----------------------------------------------------------------------------
 
-volatile uint8_t   *bitmap  = (volatile uint8_t *)  0x10000000
-volatile uint16_t  *palette = (volatile uint16_t *) 0x20000000
+volatile uint8_t   *bitmap  = (volatile uint8_t *)  0x10000000;
+volatile uint16_t  *palette = (volatile uint16_t *) 0x20000000;
 
 /* draw_poly return codes */
 enum {POLY_MORE, POLY_FRAME, POLY_FRAME64, POLY_STREAM};
@@ -202,6 +202,12 @@ enum {POLY_MORE, POLY_FRAME, POLY_FRAME64, POLY_STREAM};
 void draw_hline(uint8_t col, int x1, int x2, int y) {
 	for(int i=x1; i<x2; i++) {
 		bitmap[256*y+i] = col;
+	}
+}
+
+void clear() {
+	for(unsigned int i=0; i<200*256; i++) {
+		bitmap[i] = 0;
 	}
 }
 
@@ -296,6 +302,7 @@ int draw_frame() {
 
 	if(flags & 1) {
 		/* clear */
+		clear();
 	}
 
 	if(flags & 2) {
@@ -362,9 +369,16 @@ int main(int argc, char* argv[])
 	int i=0;
 
 	puts("MCH_NICC");
+    LED_RED   = ( 0x1f) << 11;
+	palette[0] = 0;
+	palette[1] = 0xFFFF;
+	for(int x=0; x<256; x++) for(int y=0; y<200; y++) {
+		bitmap[y*256+x] = (x==y) ? 1 : 0;
+	}
+    LED_RED   = 0;
     while (!done) {
     	if(LED_BLUE) LED_BLUE = 0;
-		else LED_BLUE = ( 0x1f) << 11;
+		else LED_BLUE = ( 0x1) << 11;
 		done = draw_frame();
 		printf("%d\n",i++);
     }
