@@ -337,7 +337,7 @@ module riscv_playground(
    begin
      if (request) request <= request & ~file_request_ready;
      else
-     if (mem_address_is_file & (buffercontent != {4'b0, mem_address[27:10], 10'b0}) & mem_rstrb)
+     if ((mem_address_is_file & (buffercontent != {4'b0, mem_address[27:10], 10'b0}) & mem_rstrb) | (io_wstrb & mem_address[20]))
      begin
        buffercontent <= {4'b0, mem_address[27:10], 10'b0};
        request    <= 1;
@@ -614,6 +614,7 @@ module riscv_playground(
      if (io_wstrb & mem_address[11]) sdm_blue  <= io_modifier;
 
      if (io_wstrb & mem_address[12]) lcd_ctrl <= io_modifier;
+     if (io_wstrb & mem_address[20]) file_id  <= io_modifier;
      //                         13   lcd_data write-only, side-effects in LCD code
 
      //                         16   uart_data, side-effects in UART code

@@ -91,6 +91,7 @@ uint32_t random(void)
 #define LED_GREEN *(volatile uint16_t  *) 0x40000400
 #define LED_BLUE  *(volatile uint16_t  *) 0x40000800
 
+#define BG_COLOR  *(volatile uint32_t  *) 0x40004000
 // -----------------------------------------------------------------------------
 //   Textmode handling
 // -----------------------------------------------------------------------------
@@ -268,17 +269,34 @@ int printf(const char *fmt,...)
 }
 
 // -----------------------------------------------------------------------------
+//   File IO
+// -----------------------------------------------------------------------------
+#define FILE_ID  *(volatile uint32_t  *) 0x40100000
+#define FILE_MAP  *(volatile uint8_t  *) 0x90000000
+
+// -----------------------------------------------------------------------------
 //   Main
 // -----------------------------------------------------------------------------
 
 void main(void)
 {
   clear();
+  BG_COLOR = 0x0;
 
   putchar(10);
   highlight();
   puts("RISC-V Playground");
   printf("Most recent random number: 0x%x.\n", random());
+  FILE_ID = 0xBEEFD00D;
+  printf("FID: %x\n",FILE_ID);
+  printf("%s",&FILE_MAP);
+  /*
+  for(int i=0; i<64; i++) {
+	if(i%8==0) putchar('\n');
+  	print_hex_digits(*(&FILE_MAP+i),2);
+	putchar(' ');
+  }
+  */
   normal();
   putchar(10);
 
